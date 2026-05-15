@@ -736,22 +736,20 @@ function openActionModal(id, b) {
                 
                 const newPaid = livePaid + amt;
                 
+                // Optimistically update local data and refresh modal
+                bookingsData[id].advanceAmount = newPaid;
+                bookingsData[id].paymentHistory = history;
+                openActionModal(id, bookingsData[id]);
+                
                 setSyncingState();
                 db.ref('bookings/' + id).update({ 
                     advanceAmount: newPaid, 
                     paymentHistory: history
                 }).then(() => {
                     setSyncedState();
-                    // Re-open modal with fresh data so balance updates immediately
-                    const updatedBooking = bookingsData[id];
-                    if (updatedBooking) {
-                        openActionModal(id, updatedBooking);
-                    } else {
-                        actionModal.classList.remove('active');
-                    }
                 }).catch(err => {
                     setSyncedState();
-                    alert("Error saving payment: " + err.message);
+                    console.error("Error saving payment:", err);
                 });
             }
         });
@@ -790,11 +788,15 @@ function openActionModal(id, b) {
     if (btnShareAdmin) {
         btnShareAdmin.onclick = () => {
             if(confirm("Are you sure you want to share this fully paid booking to the Admin Panel? It will be removed from the dashboard.")) {
+                // Optimistic UI updates immediately
+                if(bookingsData[id]) bookingsData[id].status = 'Completed';
+                actionModal.classList.remove('active');
+                updateAllViews();
+                
                 setSyncingState();
                 db.ref('bookings/' + id).update({ status: 'Completed' }).then(() => {
                     setSyncedState();
-                    actionModal.classList.remove('active');
-                });
+                }).catch(err => { setSyncedState(); console.error(err); });
             }
         };
     }
@@ -819,9 +821,13 @@ function openActionModal(id, b) {
 
     document.getElementById('btn-delete').addEventListener('click', () => {
         if(confirm("Are you sure you want to delete this booking?")) {
-            setSyncingState();
-            db.ref('bookings/' + id).remove().then(setSyncedState);
+            // Optimistic UI update immediately
+            delete bookingsData[id];
             actionModal.classList.remove('active');
+            updateAllViews();
+            
+            setSyncingState();
+            db.ref('bookings/' + id).remove().then(() => setSyncedState()).catch(e => { setSyncedState(); console.error(e); });
         }
     });
 
