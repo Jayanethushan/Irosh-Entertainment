@@ -239,6 +239,30 @@ body {
 .badge.confirmed { background: rgba(0,212,255,0.2); color: var(--accent); border: 1px solid var(--accent); }
 .badge.completed { background: rgba(46,213,115,0.2); color: var(--success); border: 1px solid var(--success); }
 
+/* Status Dots */
+.status-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--danger);
+    box-shadow: 0 0 6px var(--danger);
+    transition: 0.3s;
+    cursor: help;
+}
+.status-dot.online {
+    background: var(--success);
+    box-shadow: 0 0 6px var(--success);
+}
+.status-dot.syncing {
+    background: var(--warning);
+    box-shadow: 0 0 6px var(--warning);
+    animation: pulse-sync 0.8s infinite alternate;
+}
+@keyframes pulse-sync {
+    0% { transform: scale(1); opacity: 1; }
+    100% { transform: scale(1.3); opacity: 0.6; box-shadow: 0 0 12px var(--warning); }
+}
+
 /* Forms */
 .form-group { margin-bottom: 15px; }
 .form-group label { display: block; margin-bottom: 5px; font-size: 0.85rem; color: var(--text-muted); }
@@ -296,10 +320,41 @@ body {
 .panel-body td { font-family: 'JetBrains Mono', monospace; }
 
 /* Print Styles */
+#receipt-print-area { display: none; }
+
 @media print {
     body * { visibility: hidden; }
-    .print-area, .print-area * { visibility: visible; }
-    .print-area { position: absolute; left: 0; top: 0; width: 100%; color: #000; background: #fff; font-family: monospace; }
+    #receipt-print-area, #receipt-print-area * { visibility: visible; }
+    
+    #receipt-print-area {
+        display: block !important;
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 300px; /* 80mm standard width */
+        margin: 0;
+        padding: 5px;
+        color: #000;
+        background: #fff;
+        font-family: 'JetBrains Mono', monospace;
+    }
+
+    .receipt-header { text-align: center; margin-bottom: 15px; border-bottom: 2px dashed #000; padding-bottom: 10px; }
+    .receipt-header h1 { font-size: 1.6rem; font-weight: 800; margin-bottom: 5px; font-family: 'Exo 2', sans-serif; }
+    .receipt-header p { font-size: 0.85rem; margin: 2px 0; font-weight: 600; }
+    
+    .receipt-body { font-size: 0.9rem; margin-bottom: 15px; }
+    .receipt-row { display: flex; justify-content: space-between; margin-bottom: 6px; }
+    
+    .receipt-services { margin: 15px 0; border-top: 1px dashed #000; border-bottom: 1px dashed #000; padding: 10px 0; }
+    .receipt-services h3 { font-size: 0.95rem; margin-bottom: 8px; text-transform: uppercase; }
+    .receipt-services div { margin-bottom: 4px; font-size: 0.85rem; }
+    
+    .receipt-totals { margin-top: 15px; }
+    .receipt-total-row { display: flex; justify-content: space-between; font-weight: 600; font-size: 1rem; margin-bottom: 5px; }
+    .receipt-balance { font-size: 1.2rem; font-weight: 800; border-top: 2px solid #000; padding-top: 5px; margin-top: 5px; }
+    
+    .receipt-footer { text-align: center; margin-top: 20px; font-size: 0.85rem; border-top: 2px dashed #000; padding-top: 15px; font-weight: bold; }
 }
 
 /* FullCalendar Dark Theme Overrides */
@@ -434,3 +489,107 @@ body {
     }
     .panel-body th, .panel-body td { font-size: 0.8rem; }
 }
+
+/* ======================================
+   RECEIPT PREVIEW MODAL
+   ====================================== */
+#receipt-preview-modal .modal {
+    max-width: 420px;
+    background: #1a1f2e;
+}
+
+#receipt-preview-modal .modal-body {
+    display: flex;
+    justify-content: center;
+    padding: 25px 20px;
+    background: repeating-linear-gradient(
+        0deg,
+        transparent,
+        transparent 28px,
+        rgba(255,255,255,0.015) 28px,
+        rgba(255,255,255,0.015) 29px
+    );
+}
+
+/* The paper receipt itself */
+.receipt-paper {
+    width: 300px;
+    background: #ffffff;
+    color: #111;
+    padding: 16px 14px;
+    border-radius: 4px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12.5px;
+    line-height: 1.6;
+    box-shadow: 0 8px 40px rgba(0,0,0,0.6), 0 0 0 1px rgba(0,0,0,0.15);
+    position: relative;
+}
+
+/* Torn top/bottom edges */
+.receipt-paper::before, .receipt-paper::after {
+    content: '';
+    position: absolute;
+    left: 0; right: 0;
+    height: 10px;
+    background: repeating-linear-gradient(
+        90deg,
+        #1a1f2e 0px, #1a1f2e 8px,
+        transparent 8px, transparent 16px
+    );
+    z-index: 1;
+}
+.receipt-paper::before { top: -10px; }
+.receipt-paper::after { bottom: -10px; }
+
+.rp-header {
+    text-align: center;
+    border-bottom: 2px dashed #555;
+    padding-bottom: 10px;
+    margin-bottom: 10px;
+}
+.rp-header img { max-width: 90px; margin-bottom: 4px; }
+.rp-header h2 { font-size: 16px; font-weight: 900; letter-spacing: 1px; font-family: 'Exo 2', sans-serif; }
+.rp-header p { font-size: 11px; color: #555; margin: 1px 0; }
+
+.rp-divider { border: none; border-top: 1px dashed #999; margin: 8px 0; }
+
+.rp-row { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 3px; }
+.rp-row.bold { font-weight: 700; }
+
+.rp-section-title {
+    font-size: 10.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: #555;
+    margin: 6px 0 3px 0;
+    font-weight: 700;
+}
+
+.rp-service { font-size: 11.5px; padding-left: 4px; margin-bottom: 2px; }
+
+.rp-totals { margin-top: 6px; border-top: 2px dashed #555; padding-top: 8px; }
+.rp-total-row { display: flex; justify-content: space-between; font-size: 12.5px; font-weight: 600; margin-bottom: 4px; }
+.rp-balance { 
+    display: flex; justify-content: space-between; 
+    font-size: 15px; font-weight: 900; 
+    border-top: 2px solid #000; margin-top: 6px; padding-top: 6px;
+}
+.rp-cleared {
+    text-align: center; font-size: 13px; font-weight: 900;
+    border-top: 2px solid #000; margin-top: 6px; padding-top: 6px;
+    letter-spacing: 0.5px; color: #1a7a2e;
+}
+
+.rp-payments { margin: 6px 0; }
+.rp-payment-item { display: flex; justify-content: space-between; font-size: 10.5px; color: #444; margin-bottom: 2px; }
+
+.rp-footer {
+    text-align: center;
+    margin-top: 12px;
+    border-top: 2px dashed #555;
+    padding-top: 10px;
+    font-size: 11.5px;
+    color: #333;
+}
+.rp-footer strong { font-size: 13px; display: block; margin-top: 4px; }
+

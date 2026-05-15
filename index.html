@@ -14,6 +14,10 @@
     <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-database-compat.js"></script>
     
+    <!-- Google API & Identity Services (For Calendar Sync) -->
+    <script src="https://apis.google.com/js/api.js"></script>
+    <script src="https://accounts.google.com/gsi/client"></script>
+
     <script src="app.js" defer></script>
 </head>
 <body>
@@ -32,10 +36,6 @@
         </nav>
         <div class="sidebar-footer">
             <button class="btn btn-ghost w-full" id="btn-settings"><i class="fa-solid fa-sliders"></i> Settings</button>
-            <div style="display:flex; align-items:center; justify-content:center; gap:8px; margin-top:15px; font-size:11px; font-family:'JetBrains Mono'; color:var(--text-muted);">
-                <div id="sync-dot" style="width:8px; height:8px; border-radius:50%; background:var(--accent);"></div>
-                <span id="sync-status">Online Sync</span>
-            </div>
         </div>
     </aside>
 
@@ -45,7 +45,11 @@
             <div class="header-title">
                 <h1 id="view-title">Dashboard</h1>
             </div>
-            <div class="header-actions" style="display:flex; gap:10px; align-items:center;">
+            <div class="header-actions" style="display:flex; gap:15px; align-items:center;">
+                <div class="status-indicators" style="display:flex; gap:10px; border-right:1px solid var(--border); padding-right:15px;">
+                    <div id="network-dot" class="status-dot" title="Network: Checking..."></div>
+                    <div id="db-dot" class="status-dot" title="Database: Checking..."></div>
+                </div>
                 <button class="btn btn-ghost mobile-only" id="btn-settings-mobile"><i class="fa-solid fa-sliders"></i></button>
                 <button class="btn btn-primary" id="btn-new-booking"><i class="fa-solid fa-plus"></i> <span class="hide-mobile">New Booking</span></button>
             </div>
@@ -163,6 +167,28 @@
                             </div>
                         </div>
                     </div>
+
+                    <!-- Completed Bookings History -->
+                    <div class="panel" style="margin-bottom:20px;">
+                        <div class="panel-header"><span><i class="fa-solid fa-check-double"></i> Fully Paid / Completed Bookings</span></div>
+                        <div class="panel-body" style="padding:0;">
+                            <table id="admin-completed-table">
+                                <thead>
+                                    <tr>
+                                        <th>Customer</th>
+                                        <th>Event Date</th>
+                                        <th>Services</th>
+                                        <th>Total Paid (Rs.)</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <!-- Populated by JS -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
                     <div class="panel">
                         <div class="panel-header"><span><i class="fa-solid fa-database"></i> Database Management</span></div>
                         <div class="panel-body" style="display:flex; gap:10px;">
@@ -280,5 +306,40 @@
         </div>
     </div>
 
+    <!-- Hidden Print Area -->
+    <div id="receipt-print-area"></div>
+
+    <!-- Admin Booking Detail Modal -->
+    <div class="modal-overlay" id="admin-detail-modal">
+        <div class="modal">
+            <div class="modal-header">
+                <span><i class="fa-solid fa-receipt"></i> Booking Details</span>
+                <button class="close-btn" id="close-admin-detail-modal"><i class="fa-solid fa-times"></i></button>
+            </div>
+            <div class="modal-body" id="admin-detail-body"></div>
+            <div class="modal-footer" id="admin-detail-footer"></div>
+        </div>
+    </div>
+
+    <!-- Receipt Preview Modal -->
+    <div class="modal-overlay" id="receipt-preview-modal">
+        <div class="modal">
+            <div class="modal-header">
+                <span><i class="fa-solid fa-receipt"></i> Receipt Preview</span>
+                <button class="close-btn" id="close-receipt-preview"><i class="fa-solid fa-times"></i></button>
+            </div>
+            <div class="modal-body">
+                <div class="receipt-paper" id="receipt-paper-content">
+                    <!-- Populated by JS -->
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-ghost" id="btn-close-preview"><i class="fa-solid fa-times"></i> Close</button>
+                <button class="btn btn-success" id="btn-print-now" style="min-width:140px;"><i class="fa-solid fa-print"></i> Print Now</button>
+            </div>
+        </div>
+    </div>
+
 </body>
 </html>
+

@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+    <!-- Background transparent -->
+    <g transform="translate(100, 100) rotate(-15) translate(-100, -100)">
+        <!-- Grey shadow -->
+        <polygon points="45,160 165,160 165,40 160,40 160,155 40,155 40,160" fill="#888888"/>
+        <rect x="35" y="35" width="120" height="120" fill="#000000" stroke="#888888" stroke-width="2" />
+        
+        <!-- White bottom arc -->
+        <path d="M 45 130 Q 80 160 145 125 Q 90 145 55 90 Q 45 110 45 130 Z" fill="#ffffff" />
+        
+        <!-- Cyan top arc -->
+        <path d="M 70 50 Q 120 35 150 70 Q 140 50 100 45 Q 80 45 70 50 Z" fill="#00bfff" />
+        
+        <!-- Letters -->
+        <text x="85" y="115" font-family="Georgia, serif" font-style="italic" font-size="65" font-weight="bold" fill="#32cd32" text-anchor="middle">J</text>
+        <text x="125" y="115" font-family="Impact, Arial Black, sans-serif" font-size="55" font-weight="900" fill="#ff0000" text-anchor="middle">E</text>
+    </g>
+</svg>

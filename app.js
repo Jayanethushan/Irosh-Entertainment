@@ -22,6 +22,189 @@ const db = firebase.database();
 let bookingsData = {};
 let calendar;
 
+// ==========================================
+// GOOGLE CALENDAR API CONFIGURATION
+// ==========================================
+const GOOGLE_CLIENT_ID = 'YOUR_GOOGLE_CLIENT_ID_HERE.apps.googleusercontent.com';
+const GOOGLE_API_KEY = 'YOUR_GOOGLE_API_KEY_HERE';
+const DISCOVERY_DOC = 'https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest';
+const SCOPES = 'https://www.googleapis.com/auth/calendar.events';
+
+let tokenClient;
+let gapiInited = false;
+let gisInited = false;
+
+document.addEventListener('DOMContentLoaded', () => {
+    if (typeof gapi !== 'undefined') gapi.load('client', initializeGapiClient);
+    if (typeof google !== 'undefined' && google.accounts) gisLoaded();
+});
+
+async function initializeGapiClient() {
+    try {
+        await gapi.client.init({
+            apiKey: GOOGLE_API_KEY,
+            discoveryDocs: [DISCOVERY_DOC],
+        });
+        gapiInited = true;
+    } catch(e) { console.error('GAPI Error', e); }
+}
+
+function gisLoaded() {
+    tokenClient = google.accounts.oauth2.initTokenClient({
+        client_id: GOOGLE_CLIENT_ID,
+        scope: SCOPES,
+        callback: '', 
+    });
+    gisInited = true;
+}
+
+async function authorizeGoogleCalendar() {
+    return new Promise((resolve, reject) => {
+        if (GOOGLE_CLIENT_ID === 'YOUR_GOOGLE_CLIENT_ID_HERE.apps.googleusercontent.com') {
+            return reject("NO_CLIENT_ID");
+        }
+        if (!gapiInited || !gisInited) return reject("API_NOT_LOADED");
+        
+        if (gapi.client.getToken() === null) {
+            tokenClient.callback = async (resp) => {
+                if (resp.error) reject(resp);
+                else resolve(true);
+            };
+            tokenClient.requestAccessToken({prompt: 'consent'});
+        } else {
+            resolve(true); 
+        }
+    });
+}
+
+async function clearGoogleCalendarEvents() {
+    try {
+        await authorizeGoogleCalendar();
+        showToast("Deleting Google Calendar events... Please wait.");
+        
+        let req = await gapi.client.calendar.events.list({
+            'calendarId': 'primary',
+            'q': '[IROSH_POS_SYNC]', // Magic tag
+            'showDeleted': false,
+        });
+        
+        const events = req.result.items;
+        for(let ev of events) {
+            await gapi.client.calendar.events.delete({ 'calendarId': 'primary', 'eventId': ev.id });
+        }
+        alert("Google Calendar events cleared successfully!");
+    } catch(err) {
+        if(err !== "NO_CLIENT_ID") {
+            console.error(err);
+            alert("Failed to clear Google Calendar.");
+        }
+    }
+}
+
+async function syncAllBookingsToGoogle(dataObj) {
+    try {
+        await authorizeGoogleCalendar();
+        showToast("Syncing data to Google Calendar... Please wait.");
+        
+        for(let id in dataObj) {
+            await insertOrUpdateGoogleEvent(id, dataObj[id]);
+        }
+        alert("All bookings synced to Google Calendar!");
+    } catch(err) {
+        if(err !== "NO_CLIENT_ID") console.error("Sync Error", err);
+    }
+}
+
+async function insertOrUpdateGoogleEvent(id, booking) {
+    if(GOOGLE_CLIENT_ID === 'YOUR_GOOGLE_CLIENT_ID_HERE.apps.googleusercontent.com') return false;
+    try {
+        // Quick check if API authorized silently
+        if(gapi.client.getToken() === null) return false; 
+        
+        const dateObj = new Date(booking.eventDate);
+        const endDate = new Date(dateObj.getTime() + 4 * 60 * 60 * 1000); // 4 hours later
+        
+        const event = {
+            'summary': `Booking: ${booking.customerName}`,
+            'description': `Services: ${booking.services.join(', ')}\nPhone: ${booking.customerPhone}\nTotal: Rs.${booking.totalAmount}\nAdvance: Rs.${booking.advanceAmount}\n\n[IROSH_POS_SYNC] [ID:${id}]`,
+            'start': { 'dateTime': dateObj.toISOString(), 'timeZone': 'Asia/Colombo' },
+            'end': { 'dateTime': endDate.toISOString(), 'timeZone': 'Asia/Colombo' },
+            'colorId': booking.status === 'Confirmed' ? '11' : (booking.status === 'Completed' ? '10' : '5')
+        };
+        
+        // Check if event already exists
+        let req = await gapi.client.calendar.events.list({
+            'calendarId': 'primary',
+            'q': `[ID:${id}]`,
+            'showDeleted': false,
+        });
+        
+        if(req.result.items && req.result.items.length > 0) {
+            const existingId = req.result.items[0].id;
+            await gapi.client.calendar.events.update({ 'calendarId': 'primary', 'eventId': existingId, 'resource': event });
+        } else {
+            await gapi.client.calendar.events.insert({ 'calendarId': 'primary', 'resource': event });
+        }
+        return true;
+    } catch(e) {
+        console.error("Google Event Error", e);
+        return false;
+    }
+}
+// ==========================================
+
+// Status Indicators Logic
+function updateNetworkStatus() {
+    const dot = document.getElementById('network-dot');
+    if(!dot) return;
+    if (navigator.onLine) {
+        dot.className = 'status-dot online';
+        dot.title = 'Network: Online';
+    } else {
+        dot.className = 'status-dot';
+        dot.title = 'Network: Offline';
+    }
+}
+window.addEventListener('online', updateNetworkStatus);
+window.addEventListener('offline', updateNetworkStatus);
+document.addEventListener('DOMContentLoaded', updateNetworkStatus);
+
+function setSyncingState() {
+    const dbDot = document.getElementById('db-dot');
+    if(dbDot) {
+        dbDot.className = 'status-dot syncing';
+        dbDot.title = 'Database: Syncing...';
+    }
+}
+function setSyncedState() {
+    const dbDot = document.getElementById('db-dot');
+    if(dbDot && dbDot.className.includes('syncing')) {
+        setTimeout(() => {
+            dbDot.className = 'status-dot online';
+            dbDot.title = 'Database: Synced';
+        }, 800);
+    } else if (dbDot) {
+        dbDot.className = 'status-dot online';
+        dbDot.title = 'Database: Synced';
+    }
+}
+function setOfflineDbState() {
+    const dbDot = document.getElementById('db-dot');
+    if(dbDot) {
+        dbDot.className = 'status-dot';
+        dbDot.title = 'Database: Offline/Local';
+    }
+}
+
+// Monitor Firebase Connection
+db.ref('.info/connected').on('value', function(snap) {
+    if (snap.val() === true) {
+        setSyncedState();
+    } else {
+        setOfflineDbState();
+    }
+});
+
 // Hardware (HW) module for Printing
 const HW = {
     usbDevice: null,
@@ -78,6 +261,7 @@ const HW = {
         
         let text = "";
         text += "IROSH ENTERTAINMENT\n";
+        text += "Galewela, Sri Lanka.\n";
         text += "Sound, Light & Photography\n";
         text += "--------------------------------\n";
         text += `Date: ${new Date().toLocaleDateString()}\n`;
@@ -91,7 +275,7 @@ const HW = {
         text += `Balance:    Rs. ${balance.toLocaleString()}\n`;
         text += "--------------------------------\n";
         text += "Thank you for choosing us!\n";
-        text += "Contact: 07X XXX XXXX\n";
+        text += "Tel: 0777-432573 / 077-9441340\n";
 
         const enc = new TextEncoder();
         const textBytes = enc.encode(text);
@@ -149,37 +333,122 @@ bookingsRef.on('value', (snapshot) => {
     if(data) {
         bookingsData = data;
         localStorage.setItem('irosh_bookings', JSON.stringify(data));
-        document.getElementById('sync-status').innerText = "Online Sync";
-        document.getElementById('sync-dot').style.background = "var(--success)";
+    } else {
+        bookingsData = {};
     }
+    const syncStatus = document.getElementById('sync-status');
+    const syncDot = document.getElementById('sync-dot');
+    if(syncStatus) syncStatus.innerText = "Online Sync";
+    if(syncDot) syncDot.style.background = "var(--success)";
     updateAllViews();
 }, (error) => {
     // Offline mode fallback
     const localData = localStorage.getItem('irosh_bookings');
     if(localData) {
         bookingsData = JSON.parse(localData);
-        document.getElementById('sync-status').innerText = "Offline (Local)";
-        document.getElementById('sync-dot').style.background = "var(--danger)";
-        updateAllViews();
     }
+    const syncStatus = document.getElementById('sync-status');
+    const syncDot = document.getElementById('sync-dot');
+    if(syncStatus) syncStatus.innerText = "Offline (Local)";
+    if(syncDot) syncDot.style.background = "var(--danger)";
+    updateAllViews();
 });
 
-function updateAllViews() {
-    updateDashboard();
-    updateBookingsView();
-    updateCalendar();
-    updatePendingBalances();
-    updateAdminStats();
+function printBrowserReceipt(booking, balance) {
+    const paper = document.getElementById('receipt-paper-content');
+    const printArea = document.getElementById('receipt-print-area');
+
+    // Build payment history
+    let paymentItemsHtml = '';
+    if (booking.paymentHistory && booking.paymentHistory.length > 0) {
+        paymentItemsHtml = booking.paymentHistory.map((p, i) => {
+            const dt = new Date(p.date);
+            return `<div class="rp-payment-item">
+                <span>${i === 0 ? '📌 Advance' : `💳 ${dt.toLocaleDateString('en-US', {month:'short', day:'numeric', year:'numeric'})}`}</span>
+                <span>Rs. ${(p.amount || 0).toLocaleString()}</span>
+            </div>`;
+        }).join('');
+    } else if ((booking.advanceAmount || 0) > 0) {
+        paymentItemsHtml = `<div class="rp-payment-item"><span>📌 Advance</span><span>Rs. ${booking.advanceAmount.toLocaleString()}</span></div>`;
+    }
+
+    const evDate = booking.eventDate 
+        ? new Date(booking.eventDate).toLocaleDateString('en-US', { weekday:'short', year:'numeric', month:'short', day:'numeric' })
+        : 'N/A';
+    const printDate = new Date().toLocaleDateString('en-US', { year:'numeric', month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' });
+
+    // On-screen preview (new styled classes)
+    paper.innerHTML = `
+        <div class="rp-header">
+            <img src="logo.svg" alt="Irosh Entertainment" onerror="this.style.display='none'">
+            <h2>IROSH ENT.</h2>
+            <p>Galewela, Sri Lanka</p>
+            <p>Sound · Light · Photography</p>
+        </div>
+
+        <div class="rp-row"><span>Date:</span><span>${printDate}</span></div>
+        <div class="rp-row bold"><span>Customer:</span><span>${booking.customerName}</span></div>
+        <div class="rp-row"><span>Phone:</span><span>${booking.customerPhone || 'N/A'}</span></div>
+        <div class="rp-row"><span>Event:</span><span>${evDate}</span></div>
+
+        <hr class="rp-divider">
+        <div class="rp-section-title">── Services ──</div>
+        ${(booking.services || []).map(s => `<div class="rp-service">• ${s}</div>`).join('')}
+
+        <div class="rp-totals">
+            <div class="rp-total-row"><span>Total Amount:</span><span>Rs. ${(booking.totalAmount || 0).toLocaleString()}</span></div>
+            ${paymentItemsHtml ? `
+            <hr class="rp-divider" style="margin:4px 0;">
+            <div class="rp-section-title">── Payments ──</div>
+            <div class="rp-payments">${paymentItemsHtml}</div>
+            ` : ''}
+            <div class="rp-total-row"><span>Total Paid:</span><span>Rs. ${(booking.advanceAmount || 0).toLocaleString()}</span></div>
+            ${balance > 0
+                ? `<div class="rp-balance"><span>Balance Due:</span><span>Rs. ${balance.toLocaleString()}</span></div>`
+                : `<div class="rp-cleared">✅ PAYMENT CLEARED</div>`
+            }
+        </div>
+
+        <div class="rp-footer">
+            Thank You For Choosing Us!
+            <strong>📞 0777-432573 · 077-9441340</strong>
+        </div>
+    `;
+
+    // Also populate hidden print area (for actual printing)
+    printArea.innerHTML = paper.innerHTML;
+
+    // Show preview modal
+    document.getElementById('receipt-preview-modal').classList.add('active');
+
+    // Wire Print Now button
+    const btnPrint = document.getElementById('btn-print-now');
+    const newBtn = btnPrint.cloneNode(true); // remove old listeners
+    btnPrint.replaceWith(newBtn);
+    newBtn.addEventListener('click', () => {
+        window.print();
+    });
 }
 
-window.addEventListener('online', () => {
-    document.getElementById('sync-status').innerText = "Online Sync";
-    document.getElementById('sync-dot').style.background = "var(--success)";
+// Receipt preview modal close handlers
+document.addEventListener('DOMContentLoaded', () => {
+    const closePreview = () => document.getElementById('receipt-preview-modal').classList.remove('active');
+    document.getElementById('close-receipt-preview').addEventListener('click', closePreview);
+    document.getElementById('btn-close-preview').addEventListener('click', closePreview);
 });
-window.addEventListener('offline', () => {
-    document.getElementById('sync-status').innerText = "Offline (Local)";
-    document.getElementById('sync-dot').style.background = "var(--danger)";
-});
+
+
+function updateAllViews() {
+    try {
+        updateDashboard();
+        updateBookingsView();
+        updateCalendar();
+        updatePendingBalances();
+        updateAdminStats();
+    } catch (e) {
+        alert("UI Update Error: " + e.message + "\nStack: " + e.stack);
+    }
+}
 
 function updateDashboard() {
     const bookings = Object.values(bookingsData);
@@ -191,10 +460,25 @@ function updateDashboard() {
     const recentList = document.getElementById('recent-list');
     recentList.innerHTML = '';
     
-    const recent = bookings.sort((a,b) => b.createdAt - a.createdAt).slice(0, 5);
+    const recent = bookings.filter(b => b.status !== 'Completed').sort((a,b) => b.createdAt - a.createdAt).slice(0, 5);
+    if(recent.length === 0) {
+        recentList.innerHTML = '<div style="padding:15px; text-align:center; color:var(--text-muted);">No recent pending bookings.</div>';
+    }
+    
+    // Find booking ID function
+    const findId = (bObj) => Object.keys(bookingsData).find(key => bookingsData[key] === bObj);
+
     recent.forEach(b => {
+        const balance = b.totalAmount - b.advanceAmount;
         const div = document.createElement('div');
         div.className = 'booking-row';
+        div.style.cursor = 'pointer';
+        
+        if (balance <= 0) {
+            div.style.borderLeft = '5px solid var(--success)';
+            div.style.backgroundColor = 'rgba(39, 174, 96, 0.15)';
+        }
+        
         div.innerHTML = `
             <div>
                 <div class="bk-title">${b.customerName}</div>
@@ -203,9 +487,11 @@ function updateDashboard() {
             </div>
             <div style="display:flex; flex-direction:column; align-items:flex-end;">
                 <span class="badge ${b.status.toLowerCase()}">${b.status}</span>
-                <div class="bk-amount" style="margin-top:auto;">Rs.${b.totalAmount}</div>
+                <div class="bk-amount" style="margin-top:auto; font-size:0.8rem; color:var(--text-muted);">Total: Rs.${b.totalAmount}</div>
+                <div class="bk-amount" style="${balance <= 0 ? 'color:var(--success);' : 'color:var(--danger);'} font-weight:bold;">Bal: Rs.${balance}</div>
             </div>
         `;
+        div.onclick = () => openActionModal(findId(b), b);
         recentList.appendChild(div);
     });
 }
@@ -220,6 +506,8 @@ function updateBookingsView() {
     const sortedEntries = Object.entries(bookingsData).sort((a, b) => new Date(a[1].eventDate) - new Date(b[1].eventDate));
 
     sortedEntries.forEach(([id, b]) => {
+        // Completed bookings live in Admin Panel only — hide from All Bookings
+        if (b.status === 'Completed') return;
         if (filterStatus !== 'all' && b.status !== filterStatus) return;
         if (search && !b.customerName.toLowerCase().includes(search) && !b.customerPhone.includes(search)) return;
 
@@ -248,6 +536,11 @@ function updateBookingsView() {
 
 document.getElementById('filter-status').addEventListener('change', updateBookingsView);
 document.getElementById('search-booking').addEventListener('input', updateBookingsView);
+
+// Close admin detail modal
+document.getElementById('close-admin-detail-modal').addEventListener('click', () => {
+    document.getElementById('admin-detail-modal').classList.remove('active');
+});
 
 // Calendar Initialization
 function initCalendar() {
@@ -321,50 +614,56 @@ document.querySelectorAll('.close-btn').forEach(btn => {
     });
 });
 
-// Save Booking
+// Save Booking Logic
 document.getElementById('booking-form').addEventListener('submit', (e) => {
     e.preventDefault();
-    const id = document.getElementById('booking-id').value;
-    
-    const services = [];
-    document.querySelectorAll('.service-cb:checked').forEach(cb => services.push(cb.value));
-
-    if (services.length === 0) {
-        alert("Please select at least one service.");
-        return;
-    }
-
-    const booking = {
-        customerName: document.getElementById('customer-name').value,
-        customerPhone: document.getElementById('customer-phone').value,
-        eventDate: document.getElementById('event-date').value,
-        services: services,
-        totalAmount: parseFloat(document.getElementById('total-amount').value),
-        advanceAmount: parseFloat(document.getElementById('advance-amount').value || 0),
-        status: id ? bookingsData[id].status : 'Pending',
-        createdAt: id ? bookingsData[id].createdAt : Date.now()
-    };
-
-    if (id) {
-        db.ref('bookings/' + id).update(booking);
-    } else {
-        const newRef = db.ref('bookings').push();
-        newRef.set(booking);
+    try {
+        const id = document.getElementById('booking-id').value;
         
-        const title = encodeURIComponent(`Booking: ${booking.customerName}`);
-        const details = encodeURIComponent(`Services: ${booking.services.join(', ')}\nPhone: ${booking.customerPhone}\nTotal: Rs.${booking.totalAmount}\nAdvance: Rs.${booking.advanceAmount}`);
-        const dateObj = new Date(booking.eventDate);
-        const isoDate = dateObj.toISOString().replace(/-|:|\.\d\d\d/g, "");
-        const endDate = new Date(dateObj.getTime() + 4 * 60 * 60 * 1000).toISOString().replace(/-|:|\.\d\d\d/g, ""); 
-        
-        const gcalUrl = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${title}&dates=${isoDate}/${endDate}&details=${details}`;
-        
-        if(confirm("Booking Saved! Do you want to add this event to your Google Calendar now?")) {
-            window.open(gcalUrl, '_blank');
+        const services = [];
+        document.querySelectorAll('.service-cb:checked').forEach(cb => services.push(cb.value));
+
+        if (services.length === 0) {
+            alert("Please select at least one service.");
+            return;
         }
+        
+        const total = parseFloat(document.getElementById('total-amount').value) || 0;
+        const advance = parseFloat(document.getElementById('advance-amount').value) || 0;
+
+        const booking = {
+            customerName: document.getElementById('customer-name').value,
+            customerPhone: document.getElementById('customer-phone').value,
+            eventDate: document.getElementById('event-date').value,
+            services: services,
+            totalAmount: total,
+            advanceAmount: advance,
+            status: id ? bookingsData[id].status : 'Pending',
+            createdAt: id ? bookingsData[id].createdAt : Date.now(),
+            paymentHistory: id && bookingsData[id].paymentHistory ? bookingsData[id].paymentHistory : (advance > 0 ? [{ amount: advance, date: Date.now() }] : [])
+        };
+        
+        // Close modal immediately so dashboard refreshes feel instant
+        bookingModal.classList.remove('active');
+        
+        setSyncingState();
+        if (id) {
+            db.ref('bookings/' + id).update(booking).then(() => {
+                setSyncedState();
+                insertOrUpdateGoogleEvent(id, booking);
+            }).catch(err => { setSyncedState(); console.error("Firebase Update Error:", err); });
+        } else {
+            const newRef = db.ref('bookings').push();
+            newRef.set(booking).then(async () => {
+                setSyncedState();
+                // Try Google Calendar Auto-sync (only if API is configured)
+                await insertOrUpdateGoogleEvent(newRef.key, booking);
+            }).catch(err => { setSyncedState(); console.error("Firebase Save Error:", err); });
+        }
+    } catch(err) {
+        console.error("Form Save Error:", err);
+        alert("Save Error: " + err.message);
     }
-    
-    bookingModal.classList.remove('active');
 });
 
 function openActionModal(id, b) {
@@ -386,23 +685,88 @@ function openActionModal(id, b) {
         
         <div style="margin-top:20px; background:var(--bg-sec); border:1px solid var(--border); border-radius:4px; padding:15px; font-family:'JetBrains Mono';">
             <div style="display:flex; justify-content:space-between; margin-bottom:8px;"><span>Total Amount:</span> <span>Rs. ${b.totalAmount.toLocaleString()}</span></div>
-            <div style="display:flex; justify-content:space-between; margin-bottom:8px;"><span>Advance Paid:</span> <span style="color:var(--accent);">Rs. ${b.advanceAmount.toLocaleString()}</span></div>
+            <div style="display:flex; justify-content:space-between; margin-bottom:8px;"><span>Total Paid:</span> <span style="color:var(--accent);">Rs. ${b.advanceAmount.toLocaleString()}</span></div>
             <div style="height:1px; background:var(--border); margin:10px 0;"></div>
             <div style="display:flex; justify-content:space-between; font-size:1.2rem; font-weight:bold;"><span>Balance Due:</span> <span style="color:var(--danger);">Rs. ${balance.toLocaleString()}</span></div>
         </div>
+
+        ${balance > 0 ? `
+            <div style="margin-top:20px; display:flex; gap:10px;">
+                <input type="number" id="pay-amount-input" placeholder="Enter amount..." style="flex:1; padding:8px; border-radius:4px; border:1px solid var(--border); background:var(--bg-card); color:#fff;">
+                <button class="btn btn-success" id="btn-add-payment">Add Payment</button>
+            </div>
+        ` : ''}
     `;
 
     footer.innerHTML = `
+        <button class="btn btn-success" id="btn-print-receipt" style="margin-right:auto;"><i class="fa-solid fa-print"></i> Print Receipt</button>
         ${b.status === 'Pending' ? `<button class="btn btn-primary" id="btn-confirm-booking"><i class="fa-brands fa-whatsapp"></i> Confirm (WA)</button>` : ''}
-        ${b.status === 'Confirmed' ? `<button class="btn btn-success" id="btn-finalize"><i class="fa-solid fa-print"></i> Hardware Print Bill</button>
-                                      <button class="btn btn-success" id="btn-complete-booking"><i class="fa-solid fa-check"></i> Complete Event</button>` : ''}
+        ${balance <= 0 ? `<button class="btn btn-success" id="btn-share-admin"><i class="fa-solid fa-share-nodes"></i> Share to Admin Panel</button>` : ''}
         <button class="btn btn-warning" id="btn-edit"><i class="fa-solid fa-pen"></i> Edit</button>
         <button class="btn btn-danger" id="btn-delete"><i class="fa-solid fa-trash"></i> Delete</button>
     `;
 
-    if(b.status === 'Pending') {
-        document.getElementById('btn-confirm-booking').addEventListener('click', () => {
-            db.ref('bookings/' + id).update({ status: 'Confirmed' });
+    // Add Payment Logic — uses live data to avoid stale balance
+    if (balance > 0) {
+        document.getElementById('btn-add-payment').addEventListener('click', () => {
+            const payInput = document.getElementById('pay-amount-input');
+            const amt = parseFloat(payInput.value);
+
+            // Read live values from bookingsData (not stale closure)
+            const liveBooking = bookingsData[id];
+            if (!liveBooking) { alert("Booking not found."); return; }
+            const livePaid = liveBooking.advanceAmount || 0;
+            const liveBalance = liveBooking.totalAmount - livePaid;
+
+            if(isNaN(amt) || amt <= 0) {
+                alert("Please enter a valid payment amount.");
+                return;
+            }
+            if(amt > liveBalance) {
+                alert(`Amount too high. Max balance is Rs. ${liveBalance}`);
+                return;
+            }
+            
+            if(confirm(`Add payment of Rs.${amt.toLocaleString()}? Remaining balance will be Rs.${(liveBalance - amt).toLocaleString()}`)) {
+                let history = liveBooking.paymentHistory ? [...liveBooking.paymentHistory] : [];
+                if(livePaid > 0 && history.length === 0) {
+                    history.push({ amount: livePaid, date: liveBooking.createdAt || Date.now() });
+                }
+                history.push({ amount: amt, date: Date.now() });
+                
+                const newPaid = livePaid + amt;
+                
+                setSyncingState();
+                db.ref('bookings/' + id).update({ 
+                    advanceAmount: newPaid, 
+                    paymentHistory: history
+                }).then(() => {
+                    setSyncedState();
+                    // Re-open modal with fresh data so balance updates immediately
+                    const updatedBooking = bookingsData[id];
+                    if (updatedBooking) {
+                        openActionModal(id, updatedBooking);
+                    } else {
+                        actionModal.classList.remove('active');
+                    }
+                }).catch(err => {
+                    setSyncedState();
+                    alert("Error saving payment: " + err.message);
+                });
+            }
+        });
+    }
+
+    // Print Receipt
+    document.getElementById('btn-print-receipt').addEventListener('click', () => {
+        printBrowserReceipt(b, balance);
+    });
+
+    const btnConfirm = document.getElementById('btn-confirm-booking');
+    if (btnConfirm) {
+        btnConfirm.addEventListener('click', () => {
+            setSyncingState();
+            db.ref('bookings/' + id).update({ status: 'Confirmed' }).then(setSyncedState);
             
             let msg = `Hello ${b.customerName},%0A%0AYour booking for *${b.services.join(', ')}* on ${new Date(b.eventDate).toLocaleDateString()} is *CONFIRMED*. ✅%0A%0A`;
             if(b.advanceAmount > 0) {
@@ -422,16 +786,15 @@ function openActionModal(id, b) {
         });
     }
 
-    if(b.status === 'Confirmed') {
-        document.getElementById('btn-finalize').addEventListener('click', () => {
-            actionModal.classList.remove('active');
-            HW.printReceipt(b, balance);
-        });
-        
-        document.getElementById('btn-complete-booking').onclick = () => {
-            if(confirm("Are you sure you want to mark this event as Completed?")) {
-                db.ref('bookings/' + id).update({ status: 'Completed' });
-                actionModal.classList.remove('active');
+    const btnShareAdmin = document.getElementById('btn-share-admin');
+    if (btnShareAdmin) {
+        btnShareAdmin.onclick = () => {
+            if(confirm("Are you sure you want to share this fully paid booking to the Admin Panel? It will be removed from the dashboard.")) {
+                setSyncingState();
+                db.ref('bookings/' + id).update({ status: 'Completed' }).then(() => {
+                    setSyncedState();
+                    actionModal.classList.remove('active');
+                });
             }
         };
     }
@@ -456,7 +819,8 @@ function openActionModal(id, b) {
 
     document.getElementById('btn-delete').addEventListener('click', () => {
         if(confirm("Are you sure you want to delete this booking?")) {
-            db.ref('bookings/' + id).remove();
+            setSyncingState();
+            db.ref('bookings/' + id).remove().then(setSyncedState);
             actionModal.classList.remove('active');
         }
     });
@@ -561,6 +925,109 @@ function updateAdminStats() {
         document.getElementById('admin-total-income').innerText = `Rs. ${totalIncome.toLocaleString()}`;
         document.getElementById('admin-total-pending').innerText = `Rs. ${totalPending.toLocaleString()}`;
     }
+
+    const adminTable = document.querySelector('#admin-completed-table tbody');
+    if(adminTable) {
+        adminTable.innerHTML = '';
+        Object.entries(bookingsData)
+            .filter(([k, b]) => b.status === 'Completed')
+            .sort(([,a],[,b]) => (b.eventDate || '').localeCompare(a.eventDate || ''))
+            .forEach(([bookingId, b]) => {
+                const tr = document.createElement('tr');
+                const evDate = b.eventDate ? new Date(b.eventDate).toLocaleDateString() : 'Unknown';
+                tr.innerHTML = `
+                    <td><strong>${b.customerName}</strong><br><small style="color:var(--text-muted)">${b.customerPhone || ''}</small></td>
+                    <td>${evDate}</td>
+                    <td style="font-size:0.82rem;">${b.services ? b.services.join(', ') : ''}</td>
+                    <td style="color:var(--success); font-weight:bold;">Rs. ${(b.totalAmount || 0).toLocaleString()}</td>
+                    <td>
+                        <div style="display:flex; gap:6px; flex-wrap:wrap;">
+                            <button class="btn btn-primary" style="padding:5px 10px; font-size:0.8rem;" onclick="openAdminDetailModal('${bookingId}')"><i class="fa-solid fa-eye"></i> View</button>
+                            <button class="btn btn-success" style="padding:5px 10px; font-size:0.8rem;" onclick="printAdminReceipt('${bookingId}')"><i class="fa-solid fa-print"></i> Print</button>
+                        </div>
+                    </td>
+                `;
+                adminTable.appendChild(tr);
+            });
+    }
+}
+
+function openAdminDetailModal(bookingId) {
+    const b = bookingsData[bookingId];
+    if (!b) return;
+
+    const balance = (b.totalAmount || 0) - (b.advanceAmount || 0);
+    const evDate = b.eventDate ? new Date(b.eventDate).toLocaleString('en-US', { dateStyle: 'full', timeStyle: 'short' }) : 'Unknown';
+    const modal = document.getElementById('admin-detail-modal');
+    const body = document.getElementById('admin-detail-body');
+    const footer = document.getElementById('admin-detail-footer');
+
+    // Build payment history rows
+    let historyHtml = '<p style="color:var(--text-muted); font-size:0.85rem;">No payment records.</p>';
+    if (b.paymentHistory && b.paymentHistory.length > 0) {
+        historyHtml = `
+            <table style="width:100%; border-collapse:collapse; font-family:'JetBrains Mono'; font-size:0.85rem;">
+                <thead>
+                    <tr style="border-bottom:1px solid var(--border);">
+                        <th style="padding:6px; text-align:left;">#</th>
+                        <th style="padding:6px; text-align:left;">Date & Time</th>
+                        <th style="padding:6px; text-align:right;">Amount (Rs.)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${b.paymentHistory.map((p, i) => `
+                        <tr style="border-bottom:1px solid var(--border);">
+                            <td style="padding:6px;">${i + 1}</td>
+                            <td style="padding:6px; color:var(--text-muted);">${new Date(p.date).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })}</td>
+                            <td style="padding:6px; text-align:right; color:var(--success); font-weight:bold;">Rs. ${(p.amount || 0).toLocaleString()}</td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+        `;
+    } else if (b.advanceAmount > 0) {
+        historyHtml = `<p style="color:var(--text-muted); font-size:0.85rem;">Full advance payment of Rs. ${b.advanceAmount.toLocaleString()} was made at booking.</p>`;
+    }
+
+    body.innerHTML = `
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+            <h3 style="font-size:1.4rem;">${b.customerName}</h3>
+            <span class="badge completed">Completed</span>
+        </div>
+        <div style="font-family:'JetBrains Mono'; font-size:0.88rem; line-height:1.8; color:var(--text-muted); margin-bottom:15px;">
+            <div><i class="fa-brands fa-whatsapp"></i> ${b.customerPhone || 'N/A'}</div>
+            <div><i class="fa-regular fa-calendar"></i> ${evDate}</div>
+            <div><i class="fa-solid fa-list"></i> ${b.services ? b.services.join(', ') : 'N/A'}</div>
+        </div>
+        <div style="background:var(--bg-sec); border:1px solid var(--border); border-radius:6px; padding:12px; margin-bottom:15px; font-family:'JetBrains Mono';">
+            <div style="display:flex; justify-content:space-between; margin-bottom:6px;"><span>Total Amount:</span><span>Rs. ${(b.totalAmount || 0).toLocaleString()}</span></div>
+            <div style="display:flex; justify-content:space-between; margin-bottom:6px;"><span>Total Paid:</span><span style="color:var(--success);">Rs. ${(b.advanceAmount || 0).toLocaleString()}</span></div>
+            <div style="height:1px; background:var(--border); margin:8px 0;"></div>
+            <div style="display:flex; justify-content:space-between; font-weight:bold;"><span>Balance:</span><span style="color:${balance <= 0 ? 'var(--success)' : 'var(--danger)'};">Rs. ${balance.toLocaleString()} ${balance <= 0 ? '✅' : ''}</span></div>
+        </div>
+        <div style="margin-bottom:5px; font-size:0.9rem; font-weight:600; color:var(--accent);"><i class="fa-solid fa-clock"></i> Payment History</div>
+        <div style="background:var(--bg-sec); border:1px solid var(--border); border-radius:6px; padding:10px;">
+            ${historyHtml}
+        </div>
+    `;
+
+    footer.innerHTML = `
+        <button class="btn btn-success" id="btn-admin-print" style="margin-right:auto;"><i class="fa-solid fa-print"></i> Print Receipt</button>
+        <button class="btn" style="background:var(--bg-sec);" onclick="document.getElementById('admin-detail-modal').classList.remove('active')">Close</button>
+    `;
+
+    document.getElementById('btn-admin-print').onclick = () => {
+        printBrowserReceipt(b, balance);
+    };
+
+    modal.classList.add('active');
+}
+
+function printAdminReceipt(bookingId) {
+    const b = bookingsData[bookingId];
+    if (!b) return;
+    const balance = (b.totalAmount || 0) - (b.advanceAmount || 0);
+    printBrowserReceipt(b, balance);
 }
 
 document.getElementById('btn-export-db').addEventListener('click', () => {
@@ -579,8 +1046,13 @@ document.getElementById('import-file').addEventListener('change', (e) => {
         try {
             const data = JSON.parse(e.target.result);
             if(confirm("Are you sure you want to restore data? This will overwrite existing data.")) {
-                await db.ref('bookings').set(data);
-                alert("Data restored successfully!");
+                setSyncingState();
+                await db.ref('bookings').set(data).then(setSyncedState);
+                if(confirm("Data restored successfully!\nDo you want to sync all these bookings to Google Calendar now? (Requires Google API configured)")) {
+                    syncAllBookingsToGoogle(data);
+                } else {
+                    alert("Data restored successfully!");
+                }
             }
         } catch(err) {
             alert("Invalid JSON file");
@@ -594,8 +1066,12 @@ document.getElementById('btn-clear-db').addEventListener('click', () => {
     const saved = localStorage.getItem('admin_pin') || '1234';
     if(pin === saved) {
         if(confirm("WARNING: This will delete ALL bookings permanently. Are you sure?")) {
-            db.ref('bookings').remove();
-            alert("Database cleared.");
+            setSyncingState();
+            db.ref('bookings').remove().then(setSyncedState);
+            
+            if(confirm("Database cleared.\nDo you ALSO want to clear all Irosh POS events from your Google Calendar? (Requires Google API configured)")) {
+                clearGoogleCalendarEvents();
+            }
         }
     } else if (pin) {
         alert("Incorrect PIN");
